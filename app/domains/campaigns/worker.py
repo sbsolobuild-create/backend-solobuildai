@@ -943,6 +943,7 @@ async def screen_single_candidate(
             screening_payload = await screen_document_llm(
                 candidate_fields=candidate.extracted_fields or {},
                 campaign_fields=campaign.required_fields or {},
+                campaign_text=campaign.raw_text,
             )
 
             db.add(DocumentScreening(

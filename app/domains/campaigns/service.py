@@ -30,6 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.prompts.manager import PromptContext, build_prompt
 from app.core.s3 import (
     delete_s3_object,
     upload_bytes_to_s3,
@@ -760,7 +761,11 @@ async def extract_document_fields_llm(
         extraction_provider = StructuredExtractionProviderFactory.build()
 
     try:
-        return await extraction_provider.extract(document_text, existing_fields)
+        return await extraction_provider.extract(
+            context=PromptContext.EXTRACT_DOCUMENT_FIELDS,
+            raw_text=document_text,
+            existing_fields=existing_fields,
+        )
     except RuntimeError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -772,15 +777,19 @@ async def screen_document_llm(
     candidate_fields: dict,
     campaign_fields: dict,
     extraction_provider: StructuredExtractionProvider | None = None,
+    *,
+    candidate_text: str | None = None,
+    campaign_text: str | None = None,
 ) -> dict[str, Any]:
     if extraction_provider is None:
         extraction_provider = StructuredExtractionProviderFactory.build()
 
     try:
         return await extraction_provider.screen_candidate(
-            candidate_text="",
+            context=PromptContext.SCREEN_CANDIDATE,
+            candidate_text=candidate_text,
             candidate_fields=candidate_fields or {},
-            campaign_text="",
+            campaign_text=campaign_text,
             campaign_fields=campaign_fields or {},
         )
     except RuntimeError as e:
@@ -847,30 +856,13 @@ async def extract_candidates_from_csv_llm(
     if extraction_provider is None:
         extraction_provider = StructuredExtractionProviderFactory.build()
 
-    # We call into the Gemini client directly via its underlying _generate_content
-    # method so we can supply a custom array-returning prompt, but we keep the
-    # shared retry / timeout logic from the provider.
-    import json, re
+    import json
+    import re
 
-    prompt = f"""\
-You are a data extraction assistant.
-You will be given structured text representing one or more rows from a CSV file.
-Each row represents a single candidate (person).
-
-Your task:
-1. Parse each row.
-2. For every row produce a JSON object with these keys:
-   - "name"  : full name of the person (string, or null if missing)
-   - "email" : email address (string, or null if missing)
-   - "phone" : phone / mobile number as a string (or null if missing)
-   - "extracted_fields": a flat JSON object with all remaining non-empty
-     columns as key-value string pairs.
-3. Return a JSON **array** containing one object per row.
-4. Output valid JSON only — no markdown, no prose.
-
-CSV Data:
-{csv_text}
-"""
+    prompt = build_prompt(
+        PromptContext.EXTRACT_CSV_CANDIDATES,
+        csv_text=csv_text,
+    )
 
     try:
         # Access the underlying Gemini client to get a raw JSON response.
@@ -1000,8 +992,13 @@ async def process_call_webhook(payload: CallWebhookPayload) -> None:
 
         extraction_provider = StructuredExtractionProviderFactory.build()
         transcript = payload.transcript or ""
-        extracted_fields = await extraction_provider.extract(transcript, candidate_fields)
+        extracted_fields = await extraction_provider.extract(
+            context=PromptContext.EXTRACT_CALL_TRANSCRIPT,
+            raw_text=transcript,
+            existing_fields=candidate_fields,
+        )
         screening_result = await extraction_provider.screen_candidate(
+            context=PromptContext.SCREEN_CANDIDATE,
             candidate_text=transcript,
             candidate_fields=extracted_fields,
             campaign_text=campaign_text,

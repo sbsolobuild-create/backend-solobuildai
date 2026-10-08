@@ -3,8 +3,9 @@ import json
 import re
 from typing import Any
 
-from app.integrations.ai.providers.base import StructuredExtractionProvider
 from app.core.config import settings
+from app.core.prompts.manager import PromptContext, build_prompt
+from app.integrations.ai.providers.base import StructuredExtractionProvider
 
 class GeminiStructuredExtractor(StructuredExtractionProvider):
     def __init__(self, api_key: str, model: str = "gemini-3.6-flash"):
@@ -36,26 +37,28 @@ class GeminiStructuredExtractor(StructuredExtractionProvider):
         except Exception as exc:
             raise RuntimeError(f"LLM request failed: {exc}") from exc
 
-    async def extract(self, document_text: str, existing_fields: dict | None = None) -> dict[str, Any]:
-        existing_str = json.dumps(existing_fields) if existing_fields else "{}"
-        
-        prompt = f"""
-You are a generic document extraction assistant.
-You will be given the raw text of a document, as well as an existing JSON object of fields that have already been provided.
-Your task is to extract relevant structured information from the document text and return it as a JSON object.
+    async def extract(
+        self,
+        *,
+        context: PromptContext,
+        raw_text: str,
+        existing_fields: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        existing_fields_json = json.dumps(existing_fields or {})
+        if context is PromptContext.EXTRACT_DOCUMENT_FIELDS:
+            prompt_values = {
+                "document_text": raw_text,
+                "existing_fields_json": existing_fields_json,
+            }
+        elif context is PromptContext.EXTRACT_CALL_TRANSCRIPT:
+            prompt_values = {
+                "transcript": raw_text,
+                "existing_fields_json": existing_fields_json,
+            }
+        else:
+            raise ValueError(f"Prompt context {context!r} is not an extraction context.")
 
-RULES:
-1. Retain all keys and values from the `Existing Fields`. Do NOT overwrite or delete them.
-2. Extract new traits, properties, or attributes from the document and add them to the JSON object.
-3. Keep values concise. Use strings, numbers, lists of strings, or booleans.
-4. Output valid JSON only, without any conversational text or markdown formatting.
-
-Existing Fields:
-{existing_str}
-
-Document Text:
-{document_text}
-"""
+        prompt = build_prompt(context, **prompt_values)
 
         response = await self._generate_content(prompt)
 
@@ -80,36 +83,24 @@ Document Text:
         return payload
 
     async def screen_candidate(
-        self, 
-        candidate_text: str, 
-        candidate_fields: dict, 
-        campaign_text: str, 
-        campaign_fields: dict
+        self,
+        *,
+        context: PromptContext,
+        candidate_text: str | None,
+        candidate_fields: dict[str, Any],
+        campaign_text: str | None,
+        campaign_fields: dict[str, Any],
     ) -> dict[str, Any]:
-        
-        prompt = f"""
-You are an expert screening assistant. You are evaluating a Candidate against a Campaign (job, role, or generic requirement).
+        if context is not PromptContext.SCREEN_CANDIDATE:
+            raise ValueError(f"Prompt context {context!r} is not a screening context.")
 
-Campaign Raw Text:
-{campaign_text}
-
-Campaign Required Fields:
-{json.dumps(campaign_fields)}
-
-Candidate Raw Text:
-{candidate_text}
-
-Candidate Extracted Fields:
-{json.dumps(candidate_fields)}
-
-Your task is to compare the Candidate against the Campaign and output a JSON object with exactly these keys:
-- "match_score": A float between 0 and 100 representing how well the candidate matches the campaign requirements.
-- "one_line_summary": A concise one-sentence summary of the candidate's fit.
-- "matched_fields": A JSON object containing the properties/skills/requirements that the candidate successfully meets.
-- "unmatched_fields": A JSON object containing the properties/skills/requirements that the candidate is missing or fails to meet.
-
-Output valid JSON only.
-"""
+        prompt = build_prompt(
+            context,
+            campaign_text=campaign_text or "",
+            campaign_fields_json=json.dumps(campaign_fields),
+            candidate_text=candidate_text or "",
+            candidate_fields_json=json.dumps(candidate_fields),
+        )
         response = await self._generate_content(prompt)
 
         text = getattr(response, "text", None)
