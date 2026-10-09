@@ -2,13 +2,14 @@ from enum import Enum, auto
 from typing import Callable
 
 from app.core.prompts import prompts
-
+from app.core.prompts import chat_prompts
 
 class PromptContext(Enum):
     EXTRACT_DOCUMENT_FIELDS = auto()
     EXTRACT_CALL_TRANSCRIPT = auto()
     SCREEN_CANDIDATE = auto()
     EXTRACT_CSV_CANDIDATES = auto()
+    CHAT_HR = auto()
 
 
 _PROMPT_BUILDERS: dict[PromptContext, Callable[..., str]] = {
@@ -16,6 +17,7 @@ _PROMPT_BUILDERS: dict[PromptContext, Callable[..., str]] = {
     PromptContext.EXTRACT_CALL_TRANSCRIPT: prompts.extract_call_transcript,
     PromptContext.SCREEN_CANDIDATE: prompts.screen_candidate,
     PromptContext.EXTRACT_CSV_CANDIDATES: prompts.extract_csv_candidates,
+    PromptContext.CHAT_HR: chat_prompts.hr_chat_prompt,
 }
 
 

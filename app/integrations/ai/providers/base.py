@@ -34,3 +34,12 @@ class StructuredExtractionProvider(ABC):
         {match_score, one_line_summary, matched_fields, unmatched_fields}.
         """
         raise NotImplementedError
+
+    @abstractmethod
+    async def extract_csv_candidates(
+        self,
+        *,
+        csv_text: str,
+    ) -> list[dict[str, Any]]:
+        """Parse CSV text into candidate records."""
+        raise NotImplementedError

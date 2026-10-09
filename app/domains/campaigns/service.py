@@ -30,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.prompts.manager import PromptContext, build_prompt
+from app.core.prompts.manager import PromptContext
 from app.core.s3 import (
     delete_s3_object,
     upload_bytes_to_s3,
@@ -856,48 +856,13 @@ async def extract_candidates_from_csv_llm(
     if extraction_provider is None:
         extraction_provider = StructuredExtractionProviderFactory.build()
 
-    import json
-    import re
-
-    prompt = build_prompt(
-        PromptContext.EXTRACT_CSV_CANDIDATES,
-        csv_text=csv_text,
-    )
-
     try:
-        # Access the underlying Gemini client to get a raw JSON response.
-        raw = await extraction_provider._generate_content(prompt)  # type: ignore[attr-defined]
-        text = getattr(raw, "text", None) or str(raw)
+        return await extraction_provider.extract_csv_candidates(csv_text=csv_text)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"AI service is currently unavailable: {exc}",
-        )
-
-    json_text = text.strip()
-    if json_text.startswith("```"):
-        json_text = re.sub(r"^```json\s*", "", json_text, flags=re.IGNORECASE)
-        json_text = re.sub(r"```$", "", json_text).strip()
-
-    try:
-        payload = json.loads(json_text)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"LLM returned invalid JSON for CSV extraction: {exc}",
-        )
-
-    if not isinstance(payload, list):
-        # Tolerate single-object responses by wrapping them
-        if isinstance(payload, dict):
-            payload = [payload]
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM did not return an array of candidates.",
-            )
-
-    return payload
+        ) from exc
 
 
 async def persist_csv_candidate(

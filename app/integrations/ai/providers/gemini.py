@@ -128,3 +128,40 @@ class GeminiStructuredExtractor(StructuredExtractionProvider):
             "unmatched_fields": payload.get("unmatched_fields", {}),
             "summary": str(payload.get("one_line_summary", ""))
         }
+
+    async def extract_csv_candidates(
+        self,
+        *,
+        csv_text: str,
+    ) -> list[dict[str, Any]]:
+        if not csv_text or not csv_text.strip():
+            raise ValueError("CSV text cannot be empty for candidate extraction.")
+
+        prompt = build_prompt(
+            PromptContext.EXTRACT_CSV_CANDIDATES,
+            csv_text=csv_text,
+        )
+        response = await self._generate_content(prompt)
+        text = getattr(response, "text", None) or str(response)
+        json_text = text.strip()
+        if json_text.startswith("```"):
+            json_text = re.sub(r"^```json\s*", "", json_text, flags=re.IGNORECASE)
+            json_text = re.sub(r"```$", "", json_text).strip()
+
+        try:
+            payload = json.loads(json_text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"LLM returned invalid JSON for CSV extraction: {exc}"
+            ) from exc
+
+        if isinstance(payload, dict):
+            payload = [payload]
+        if not isinstance(payload, list) or not all(
+            isinstance(candidate, dict) for candidate in payload
+        ):
+            raise RuntimeError(
+                "LLM did not return an array of candidate objects for CSV extraction."
+            )
+
+        return payload
